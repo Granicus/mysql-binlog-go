@@ -2,6 +2,7 @@ package binlog
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -18,7 +19,7 @@ type RowImageCell interface{}
 type NullRowImageCell MysqlType
 type NumberRowImageCell uint64
 type FloatingPointNumberRowImageCell float32
-type ComplexNumberRowImageCell complex64
+type LargeFloatingPointNumberRowImageCell float64
 type BlobRowImageCell []byte
 type StringRowImageCell struct {
 	Type  MysqlType
@@ -35,6 +36,8 @@ func NewNullRowImageCell(mysqlType MysqlType) NullRowImageCell {
 }
 
 func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex int) RowImageCell {
+	fmt.Println("Deserializing cell:", tableMap.ColumnTypes[columnIndex].String())
+
 	mysqlType := tableMap.ColumnTypes[columnIndex]
 
 	switch mysqlType {
@@ -59,14 +62,13 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		b, err := deserialization.ReadBytes(r, 3)
 		fatalErr(err)
 
-		v, err := deserialization.Uint32FromBuffer(bytes.NewBuffer(b))
-		fatalErr(err)
-
-		return NumberRowImageCell(v)
+		return NumberRowImageCell(binary.LittleEndian.Uint32(b))
 
 	case MYSQL_TYPE_LONG:
 		v, err := deserialization.ReadUint32(r)
 		fatalErr(err)
+
+		fmt.Println("long:", v)
 
 		return NumberRowImageCell(v)
 
@@ -81,25 +83,34 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		b, err := deserialization.ReadBytes(r, 4)
 		fatalErr(err)
 
-		fatalErr(deserialization.ReadFromBinaryBuffer(bytes.NewBuffer(b), &v))
+		fatalErr(binary.Read(bytes.NewBuffer(b), binary.LittleEndian, &v))
 
 		return FloatingPointNumberRowImageCell(v)
 
 	case MYSQL_TYPE_DOUBLE:
-		// Not sure if C doubles convert to Go complex64 properly
-		var v complex64
+		// Not sure if C doubles convert to Go float64 properly
+		var v float64
 		b, err := deserialization.ReadBytes(r, 8)
 		fatalErr(err)
 
-		fatalErr(deserialization.ReadFromBinaryBuffer(bytes.NewBuffer(b), &v))
+		fatalErr(binary.Read(bytes.NewBuffer(b), binary.LittleEndian, &v))
 
-		return ComplexNumberRowImageCell(v)
+		return LargeFloatingPointNumberRowImageCell(v)
 
 	case MYSQL_TYPE_NULL:
 		return NewNullRowImageCell(mysqlType)
 
-	case MYSQL_TYPE_TIMESTAMP, MYSQL_TYPE_DATE, MYSQL_TYPE_TIME, MYSQL_TYPE_DATETIME:
+	case MYSQL_TYPE_TIMESTAMP, MYSQL_TYPE_TIME, MYSQL_TYPE_DATETIME:
 		log.Fatal("time fields disabled")
+
+	case MYSQL_TYPE_DATE:
+		date, err := deserialization.ReadDate(r)
+		fatalErr(err)
+
+		return TimeRowImageCell{
+			Type:  mysqlType,
+			Value: date,
+		}
 
 	case MYSQL_TYPE_TIME_V2:
 		v, err := deserialization.ReadTimeV2(r)
@@ -150,15 +161,28 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 			}
 		}
 
-		lengthBytes, err := deserialization.ReadUint8(r)
+		metadata := tableMap.Metadata[columnIndex]
+
+		var length uint16
+		var err error
+
+		if metadata.MaxLength() <= 255 {
+			smallLength, err := deserialization.ReadUint8(r)
+			tempErr(err)
+
+			length = uint16(smallLength)
+		} else {
+			length, err = deserialization.ReadUint16(r)
+			tempErr(err)
+		}
+
+		b, err := deserialization.ReadBytes(r, int(length))
 		tempErr(err)
 
-		fmt.Println("first:", lengthBytes)
-
-		b, err := deserialization.ReadBytes(r, int(lengthBytes))
-		tempErr(err)
-
-		fmt.Println("bytes:", string(b))
+		fmt.Println("max length:", metadata.MaxLength())
+		fmt.Println("bytes length:", len(b))
+		fmt.Println("bytes:", b)
+		fmt.Println("bytes string:", string(b))
 
 		return StringRowImageCell{
 			Type:  mysqlType,
@@ -172,6 +196,53 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 				fatalErr(err)
 			}
 		}
+
+		metadata := tableMap.Metadata[columnIndex]
+		fmt.Println("** STRING METADATA:", metadata)
+		fmt.Println("** STRING REALTYPE:", metadata.RealType())
+
+		if metadata.RealType() == MYSQL_TYPE_ENUM {
+			fmt.Println("************ DESERIALIZING ENUM")
+
+			/*(
+			lengthByte, err := deserialization.ReadByte(r)
+			tempErr(err)
+
+			fmt.Println("** LENGTH BYTE:", lengthByte)
+			*/
+
+			b, err := deserialization.ReadBytes(r, int(metadata.PackSize()))
+			tempErr(err)
+
+			enumString := string(b[0] + byte(48))
+
+			fmt.Println("** ENUM READ:", enumString)
+			return StringRowImageCell{
+				Type:  mysqlType,
+				Value: enumString,
+			}
+		}
+
+		var length uint16
+		var err error
+
+		if metadata.PackSize() <= 255 {
+			smallLength, err := deserialization.ReadUint8(r)
+			tempErr(err)
+
+			length = uint16(smallLength)
+		} else {
+			length, err = deserialization.ReadUint16(r)
+			tempErr(err)
+		}
+
+		fmt.Println("** STRING READ LENGTH:", length)
+
+		b, err := deserialization.ReadBytes(r, int(length))
+		tempErr(err)
+
+		fmt.Println("** BYTES READ:", b)
+		fmt.Println("** STRING READ:", string(b))
 
 		/*
 			I'm still not completely sure if this is the correct way to do this.
@@ -188,11 +259,13 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 
 		*/
 
-		length, err := deserialization.ReadPackedInteger(r)
-		tempErr(err)
+		/*
+			length, err := deserialization.ReadPackedInteger(r)
+			tempErr(err)
 
-		b, err := deserialization.ReadBytes(r, int(length))
-		tempErr(err)
+			b, err := deserialization.ReadBytes(r, int(length))
+			tempErr(err)
+		*/
 
 		return StringRowImageCell{
 			Type:  mysqlType,
@@ -201,8 +274,25 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 
 	case MYSQL_TYPE_BLOB:
 		metadata := tableMap.Metadata[columnIndex]
-		b, err := deserialization.ReadBytes(r, int(metadata.PackSize()))
+		lengthBytes, err := deserialization.ReadBytes(r, int(metadata.PackSize()))
 		fatalErr(err)
+
+		if len(lengthBytes) != 8 {
+			padding := make([]byte, 8-len(lengthBytes))
+			for i := range padding {
+				padding[i] = byte(0)
+			}
+
+			lengthBytes = append(lengthBytes, padding...)
+		}
+
+		length := binary.LittleEndian.Uint64(lengthBytes)
+
+		b, err := deserialization.ReadBytes(r, int(length))
+		fatalErr(err)
+
+		fmt.Println("** BLOB LENGTH:", length)
+		fmt.Println("** BLOB VALUE:", string(b))
 
 		return BlobRowImageCell(b)
 

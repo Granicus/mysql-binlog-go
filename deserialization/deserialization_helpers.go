@@ -11,27 +11,6 @@ import (
 	"github.com/granicus/mysql-binlog-go/bitset"
 )
 
-// These constants may not be necessary later
-// if these aren't being used much, just yank them out
-const (
-	NUL byte = iota
-	SOH
-	STX
-	ETX
-	EOT
-	ENQ
-	ACK
-	BEL
-	BS
-	TAB
-	LF
-	VT
-	FF
-	CR
-	SO
-	SI
-)
-
 /*
 GENERAL PARSING INFO
 ====================
@@ -45,16 +24,7 @@ PLEASE NOTE
 ===========
 
 All functions in this file assume the passed reader is already seeked
-to the first byte in whatever it is attempting to read. To read an entire
-event header, execute them in this order:
-
-ReadTimestamp
-ReadType
-ReadServerId
-ReadLength
-ReadNextPosition
-ReadFlags
-(Extended v4 fields coming soon)
+to the first byte in whatever it is attempting to read.
 
 */
 
@@ -69,35 +39,6 @@ func checkRead(n int, err error, bytes []byte) error {
 	}
 
 	return nil
-}
-
-// Interfaces passed in must be pointers
-func ReadFromBinaryBuffer(b *bytes.Buffer, i interface{}) error {
-	return binary.Read(b, binary.LittleEndian, i)
-}
-
-func Uint64FromBuffer(b *bytes.Buffer) (uint64, error) {
-	var value uint64
-	err := ReadFromBinaryBuffer(b, &value)
-	return value, err
-}
-
-func Uint32FromBuffer(b *bytes.Buffer) (uint32, error) {
-	var value uint32
-	err := ReadFromBinaryBuffer(b, &value)
-	return value, err
-}
-
-func Uint16FromBuffer(b *bytes.Buffer) (uint16, error) {
-	var value uint16
-	err := ReadFromBinaryBuffer(b, &value)
-	return value, err
-}
-
-func Uint8FromBuffer(b *bytes.Buffer) (uint8, error) {
-	var value uint8
-	err := ReadFromBinaryBuffer(b, &value)
-	return value, err
 }
 
 func ReadBytes(r io.Reader, length int) ([]byte, error) {
@@ -126,7 +67,7 @@ func ReadUint64(r io.Reader) (uint64, error) {
 		return uint64(0), err
 	}
 
-	return Uint64FromBuffer(bytes.NewBuffer(b))
+	return binary.LittleEndian.Uint64(b), nil
 }
 
 func ReadUint32(r io.Reader) (uint32, error) {
@@ -135,7 +76,7 @@ func ReadUint32(r io.Reader) (uint32, error) {
 		return uint32(0), err
 	}
 
-	return Uint32FromBuffer(bytes.NewBuffer(b))
+	return binary.LittleEndian.Uint32(b), nil
 }
 
 func ReadUint16(r io.Reader) (uint16, error) {
@@ -144,16 +85,16 @@ func ReadUint16(r io.Reader) (uint16, error) {
 		return uint16(0), err
 	}
 
-	return Uint16FromBuffer(bytes.NewBuffer(b))
+	return binary.LittleEndian.Uint16(b), nil
 }
 
 func ReadUint8(r io.Reader) (uint8, error) {
-	b, err := ReadBytes(r, 1)
+	b, err := ReadByte(r)
 	if err != nil {
 		return uint8(0), err
 	}
 
-	return Uint8FromBuffer(bytes.NewBuffer(b))
+	return uint8(b), nil
 }
 
 func ReadBitset(r io.Reader, bitCount int) (bitset.Bitset, error) {
@@ -177,7 +118,7 @@ func ReadNullTerminatedString(r io.Reader) (string, error) {
 			return "", err
 		}
 
-		if b == NUL {
+		if b == byte(0) {
 			break
 		}
 
@@ -196,41 +137,6 @@ func ReadNullTerminatedString(r io.Reader) (string, error) {
 
 	return string(versionBytes[:len(versionBytes)-1]), nil
 	*/
-}
-
-// This should probably return a time interface
-func ReadTimestamp(r io.Reader) (uint32, error) {
-	return ReadUint32(r)
-}
-
-func ReadType(r io.Reader) (byte, error) {
-	return ReadByte(r)
-}
-
-func ReadServerId(r io.Reader) (uint32, error) {
-	return ReadUint32(r)
-}
-
-func ReadLength(r io.Reader) (uint32, error) {
-	return ReadUint32(r)
-}
-
-func ReadNextPosition(r io.Reader) (uint32, error) {
-	return ReadUint32(r)
-}
-
-func ReadFlags(r io.Reader) ([]byte, error) {
-	return ReadBytes(r, 2)
-}
-
-func ReadTableId(r io.Reader) (uint64, error) {
-	b, err := ReadBytes(r, 6)
-	fatalErr(err)
-
-	// Have to pass 8 byte buffer, so append 6 bytes read to end of 2 '\0' value bytes
-	buf := bytes.NewBuffer(append(b, []byte{NUL, NUL}...))
-
-	return Uint64FromBuffer(buf)
 }
 
 /*
@@ -295,5 +201,7 @@ func ReadPackedInteger(r io.Reader) (uint64, error) {
 		return uint64(0), err
 	}
 
-	return Uint64FromBuffer(bytes.NewBuffer(b))
+	var value uint64
+	err = binary.Read(bytes.NewBuffer(b), binary.LittleEndian, &value)
+	return value, err
 }

@@ -1,7 +1,6 @@
 package binlog
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -117,9 +116,7 @@ func (m *ColumnMetadata) PackSize() uint8 {
 			fatalMetadataLengthMismatch()
 		}
 
-		v, err := deserialization.Uint8FromBuffer(bytes.NewBuffer(m.data))
-		fatalErr(err)
-		return v
+		return uint8(m.data[0])
 
 	case STRING_METADATA, BITSET_METADATA: // NOTE: may be big endian (see shyiko version)
 		fmt.Println("!!! HEY, I JUST DECODED STRING METADATA. IF THERE IS AN ERROR BELOW, THIS COULD BE WHY.")
@@ -127,9 +124,7 @@ func (m *ColumnMetadata) PackSize() uint8 {
 			fatalMetadataLengthMismatch()
 		}
 
-		var v uint8
-		fatalErr(binary.Read(bytes.NewBuffer(m.data[1:]), binary.BigEndian, &v))
-		return v
+		return uint8(m.data[1])
 
 	case NEW_DECIMAL_METADATA:
 		log.Fatal("Cannot call PackSize() on NEW_DECIMAL_METADATA")
@@ -144,7 +139,7 @@ func (m *ColumnMetadata) PackSize() uint8 {
 	return 0
 }
 
-func (m *ColumnMetadata) RealType() byte {
+func (m *ColumnMetadata) RealType() MysqlType {
 	if m.metaType != STRING_METADATA {
 		log.Fatal("Cannot call RealType() on metadata that is not STRING_METADATA")
 	}
@@ -153,7 +148,7 @@ func (m *ColumnMetadata) RealType() byte {
 		fatalMetadataLengthMismatch()
 	}
 
-	return m.data[0]
+	return MysqlType(m.data[0])
 }
 
 func (m *ColumnMetadata) MaxLength() uint16 {
@@ -165,9 +160,7 @@ func (m *ColumnMetadata) MaxLength() uint16 {
 		fatalMetadataLengthMismatch()
 	}
 
-	v, err := deserialization.Uint16FromBuffer(bytes.NewBuffer(m.data))
-	fatalErr(err)
-	return v
+	return binary.LittleEndian.Uint16(m.data)
 }
 
 func (m *ColumnMetadata) Precision() uint8 {
@@ -179,9 +172,7 @@ func (m *ColumnMetadata) Precision() uint8 {
 		fatalMetadataLengthMismatch()
 	}
 
-	v, err := deserialization.Uint8FromBuffer(bytes.NewBuffer(m.data[:1]))
-	fatalErr(err)
-	return v
+	return uint8(m.data[1])
 }
 
 func (m *ColumnMetadata) Decimals() uint8 {
@@ -193,9 +184,7 @@ func (m *ColumnMetadata) Decimals() uint8 {
 		fatalMetadataLengthMismatch()
 	}
 
-	v, err := deserialization.Uint8FromBuffer(bytes.NewBuffer(m.data[1:]))
-	fatalErr(err)
-	return v
+	return uint8(m.data[1])
 }
 
 func (m *ColumnMetadata) BitsetLength() uint8 {
@@ -207,9 +196,7 @@ func (m *ColumnMetadata) BitsetLength() uint8 {
 		fatalMetadataLengthMismatch()
 	}
 
-	v, err := deserialization.Uint8FromBuffer(bytes.NewBuffer(m.data[:1]))
-	fatalErr(err)
-	return v
+	return uint8(m.data[1])
 }
 
 func (m *ColumnMetadata) FractionalSecondsPrecision() uint8 {
@@ -221,7 +208,5 @@ func (m *ColumnMetadata) FractionalSecondsPrecision() uint8 {
 		fatalMetadataLengthMismatch()
 	}
 
-	v, err := deserialization.Uint8FromBuffer(bytes.NewBuffer(m.data))
-	fatalErr(err)
-	return v
+	return uint8(m.data[0])
 }

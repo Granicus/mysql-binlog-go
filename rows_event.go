@@ -1,12 +1,11 @@
 package binlog
 
 import (
+	"encoding/binary"
 	"fmt"
-	"io"
-	"log"
 
 	"github.com/granicus/mysql-binlog-go/bitset"
-	"github.com/granicus/mysql-binlog-go/deserialization"
+	. "github.com/granicus/mysql-binlog-go/deserialization"
 )
 
 type RowsEvent struct {
@@ -32,8 +31,6 @@ func (e *RowsEvent) UsedFields() int {
 
 	return used
 }
-
-type RowsEventDeserializer struct{}
 
 /*
 ROWS EVENT DATA
@@ -65,77 +62,79 @@ http://bazaar.launchpad.net/~mysql/mysql-server/5.6/view/head:/sql/log_event.cc#
 
 */
 
-func (d *RowsEventDeserializer) Deserialize(reader io.ReadSeeker, eventInfo *Event) EventData {
-	{
-		b, err := deserialization.ReadBytes(reader, 16)
-		fatalErr(err)
-
-		fmt.Println("rows data bytes:", b)
-
-		_, err = reader.Seek(-16, 1)
-		fatalErr(err)
-	}
-
+func (b *Binlog) DeserializeRowsEvent(header *EventHeader) EventData {
 	e := new(RowsEvent)
-	e.dataType = eventInfo.Header.Type
+	e.dataType = header.Type
 
-	var err error
-	e.TableId, err = deserialization.ReadTableId(reader)
+	// Read 6 bytes for table id, pad to 8, read as uint64
+	tableIdBytes, err := ReadBytes(b.reader, 6)
+	fatalErr(err)
+	e.TableId = binary.LittleEndian.Uint64(append(tableIdBytes, byte(0), byte(0)))
+
+	// If the TableMapEvent has not been logged, find it and deserialize it
+	tableMap, ok := TableMapCollection[e.TableId]
+	if !ok {
+		tableMap = b.findTableMapEvent(e.TableId)
+	}
+
+	// Skip reserved bytes
+	_, err = b.reader.Seek(2, 1)
 	fatalErr(err)
 
-	_, err = reader.Seek(2, 1) // reserved
-	fatalErr(err)
-
-	// v2 row events
-	switch eventInfo.Header.Type {
+	// Skip extra v2 row event info
+	switch header.Type {
 	case WRITE_ROWS_EVENTv2, UPDATE_ROWS_EVENTv2, DELETE_ROWS_EVENTv2:
-		extraInfoLength, err := deserialization.ReadUint16(reader)
+		extraInfoLength, err := ReadUint16(b.reader)
 		fatalErr(err)
 
-		_, err = reader.Seek(int64(extraInfoLength-2), 1)
+		_, err = b.reader.Seek(int64(extraInfoLength-2), 1)
 		fatalErr(err)
 	}
 
-	e.NumberOfColumns, err = deserialization.ReadPackedInteger(reader)
+	e.NumberOfColumns, err = ReadPackedInteger(b.reader)
 	fatalErr(err)
 
-	e.UsedSet, err = deserialization.ReadBitset(reader, int(e.NumberOfColumns))
+	e.UsedSet, err = ReadBitset(b.reader, int(e.NumberOfColumns))
 	fatalErr(err)
 
 	numberOfFields := e.UsedFields()
-	numberOfRows := 1 // TODO: pass in header so we can check if it is update
-	e.Rows = make([]RowImage, numberOfRows)
+	e.Rows = []RowImage{}
 
-	// TODO
-	for r := 0; r < numberOfRows; r++ {
-		nullSet, err := deserialization.ReadBitset(reader, numberOfFields)
+	// Rows deserialization loop
+	for {
+		currentPos, err := b.reader.Seek(0, 1)
 		fatalErr(err)
 
-		// TODO: fork this off into bitset.go in a way that makes sense
+		// Check if there are any more rows to deserialize
+		if currentPos >= int64(header.NextPosition)-4 {
+			if currentPos > int64(header.NextPosition) {
+				fmt.Println("** ROW EVENT OVERSHOT READING:", currentPos-int64(header.NextPosition))
+			}
+
+			break
+		}
+
+		nullSet, err := ReadBitset(b.reader, numberOfFields)
+		fatalErr(err)
+
 		if len(e.UsedSet) != len(nullSet) {
-			log.Fatal("UsedSet and NullSet length mismatched", len(e.UsedSet), len(nullSet), numberOfFields, e.UsedSet, e.NumberOfColumns, e.TableId)
+			panic("UsedSet and NullSet length mismatched")
 		}
 
 		cells := make(RowImage, e.NumberOfColumns)
-		tableMap, ok := GetTableMapCollectionInstance()[e.TableId]
-
-		if !ok {
-			log.Fatal("Never recieved table map event for table:", e.TableId)
-		}
-
 		for i := 0; i < int(e.NumberOfColumns); i++ {
 			if e.UsedSet.Bit(uint(i)) {
 				if nullSet.Bit(uint(i)) {
 					cells[i] = NewNullRowImageCell(tableMap.ColumnTypes[i])
 				} else {
-					cells[i] = DeserializeRowImageCell(reader, tableMap, i)
+					cells[i] = DeserializeRowImageCell(b.reader, tableMap, i)
 				}
 			} else {
 				cells[i] = nil
 			}
 		}
 
-		e.Rows[r] = cells
+		e.Rows = append(e.Rows, cells)
 	}
 
 	return e

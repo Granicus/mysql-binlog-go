@@ -3,6 +3,7 @@ package deserialization
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"time"
 
@@ -30,7 +31,7 @@ func expandBitsetToBytesBigEndian(set bitset.Bitset, bitsetBitCount int) []byte 
 func padBytesBigEndian(b []byte, count int) []byte {
 	padding := make([]byte, count)
 	for i := range padding {
-		padding[i] = NUL
+		padding[i] = byte(0)
 	}
 
 	return append(padding, b...)
@@ -76,6 +77,46 @@ func removeFractionalSeconds(milliseconds uint) uint {
 }
 
 /*
+DATE
+====
+
+3 bytes
+Little Endian
+
+15 bits = year
+4 bits  = month
+5 bits  = day
+
+*/
+
+func ReadDate(r io.Reader) (time.Time, error) {
+	var year uint32
+	var month uint32
+	var day uint32
+
+	b, err := ReadBytes(r, 3)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	// Pad to 4 bytes
+	b = append(b, byte(0))
+
+	value := binary.LittleEndian.Uint32(b)
+
+	// [0-14]  1111 1111 1111 1110 0000 0000 (0xFFFE00)
+	year = (value & 0xFFFE00) >> 9
+
+	// [15-18] 0000 0000 0000 0001 1110 0000 (0x0001E0)
+	month = (value & 0x0001E0) >> 5
+
+	// [19-24] 0000 0000 0000 0000 0001 1111 (0x00001F)
+	day = (value & 0x00001F)
+
+	return time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC), nil
+}
+
+/*
 TIME V2
 =======
 
@@ -91,36 +132,35 @@ Big Endian
 */
 
 func ReadTimeV2(r io.Reader) (time.Duration, error) {
-	set, err := ReadBitset(r, 24)
+	var sign int
+	var hour uint32
+	var minute uint32
+	var second uint32
+
+	b, err := ReadBytes(r, 3)
 	if err != nil {
 		return time.Duration(0), err
 	}
 
-	var sign int
-	var hour uint16
-	var minute uint8
-	var second uint8
+	// Pad to 4 bytes
+	b = append([]byte{0}, b...)
 
-	if set.Bit(0) {
+	value := binary.BigEndian.Uint32(b)
+
+	if (value | 1) > 0 {
 		sign = 1
 	} else {
 		sign = -1
 	}
 
-	err = binary.Read(bytes.NewBuffer(expandBitsetToBytesBigEndian(set.Splice(2, 12), 10)), binary.BigEndian, &hour)
-	if err != nil {
-		return time.Duration(0), err
-	}
+	// [2-11]  Mask: 0011 1111 1111 0000 0000 0000 (0x3FF000)
+	hour = (value & 0x3FF000) >> 12
 
-	err = binary.Read(bytes.NewBuffer(expandBitsetToBytesBigEndian(set.Splice(12, 18), 6)), binary.BigEndian, &minute)
-	if err != nil {
-		return time.Duration(0), err
-	}
+	// [12-17] Mask: 0000 0000 0000 1111 1100 0000 (0x000FC0)
+	minute = (value & 0x000FC0) >> 6
 
-	err = binary.Read(bytes.NewBuffer(expandBitsetToBytesBigEndian(set.Splice(18, 24), 6)), binary.BigEndian, &second)
-	if err != nil {
-		return time.Duration(0), err
-	}
+	// [18-23] Mask: 0000 0000 0000 0000 0011 1111 (0x00003F)
+	second = (value & 0x00003F)
 
 	return time.Duration(sign) * ((time.Hour * time.Duration(hour)) + (time.Minute * time.Duration(minute)) + (time.Second * time.Duration(second))), nil
 }
@@ -166,45 +206,75 @@ NOTE: We completely ignore the sign for this type
 
 */
 
+func printUint64(n uint64) {
+	for i := uint(0); i < 64; i++ {
+		s := "0"
+		if (n & (0x8000000000000000 >> i)) > 0 {
+			s = "1"
+		}
+
+		fmt.Print(s)
+	}
+	fmt.Println()
+}
+
 func ReadDatetimeV2(r io.Reader, metadata Metadata) (time.Time, error) {
-	var yearMonth uint32
-	var day uint8
-	var hour uint8
-	var minute uint8
-	var second uint8
+	// Using uint64 for values to avoid variable truncation
+	var yearMonth uint64
+	var day uint64
+	var hour uint64
+	var minute uint64
+	var second uint64
 
-	set, err := ReadBitset(r, 48)
+	b, err := ReadBytes(r, 5)
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	yearMonthBytes := expandBitsetToBytesBigEndian(set.Splice(1, 18), 17) // 3 bytes
+	// Pad to 8 bytes
+	b = append([]byte{0, 0, 0}, b...)
 
-	// pad to 4 bytes
-	err = binary.Read(bytes.NewBuffer(padBytesBigEndian(yearMonthBytes, 1)), binary.BigEndian, &yearMonth)
-	if err != nil {
-		return time.Time{}, err
+	value := binary.BigEndian.Uint64(b)
+
+	printUint64(value)
+	printUint64(0x7FFFE00000)
+
+	// [1-17] Mask:  0111 1111 1111 1111 1100 (0000 * 5) (0x7FFFC00000)
+	yearMonth = (value & 0x7FFFC00000) >> 22
+	// fmt.Printf("yearMonth: %b", yearMonth)
+	printUint64(yearMonth)
+
+	// [18-22] Mask: (0000 * 4) 0011 1110 (0000 * 4) (0x00003E0000)
+	day = (value & 0x00003E0000) >> 17
+
+	// [23-27] Mask: (0000 * 5) 0001 1111 (0000 * 3) (0x000001F000)
+	hour = (value & 0x000001F000) >> 12
+
+	// [28-33] Mask: (0000 * 7) 1111 1100 0000 (0x0000000FC0)
+	minute = (value & 0x0000000FC0) >> 6
+
+	// [34-39] Mask: (0000 * 8) 0011 1111 (0x000000003F)
+	second = (value & 0x000000003F)
+
+	fmt.Println("year/month:", yearMonth)
+	fmt.Println("day", day)
+	fmt.Println("hour", hour)
+	fmt.Println("minute", minute)
+	fmt.Println("second", second)
+
+	// TODO: learn more about golang vs mysql time differences
+	year := 1000 // lowest mysql year value
+	month := time.January
+
+	if yearMonth != 0 {
+		year = int(yearMonth / 13)
+		month = time.Month(yearMonth%13 - 1)
 	}
 
-	err = binary.Read(bytes.NewBuffer(expandBitsetToBytesBigEndian(set.Splice(18, 23), 5)), binary.BigEndian, &day)
-	if err != nil {
-		return time.Time{}, err
-	}
+	fmt.Println("year:", year)
+	fmt.Println("month:", month)
 
-	err = binary.Read(bytes.NewBuffer(expandBitsetToBytesBigEndian(set.Splice(23, 28), 5)), binary.BigEndian, &hour)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	err = binary.Read(bytes.NewBuffer(expandBitsetToBytesBigEndian(set.Splice(28, 34), 5)), binary.BigEndian, &minute)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	err = binary.Read(bytes.NewBuffer(expandBitsetToBytesBigEndian(set.Splice(34, 40), 5)), binary.BigEndian, &second)
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	return time.Date(int(yearMonth/13), time.Month(yearMonth%13-1), int(day), int(hour), int(minute), int(second), 0, time.UTC), nil
+	date, err := time.Date(year, month, int(day), int(hour), int(minute), int(second), 0, time.UTC), nil
+	fmt.Println("Date:", date)
+	return date, err
 }

@@ -1,13 +1,18 @@
 package binlog
 
 import (
+	"encoding/binary"
 	"fmt"
-	"io"
-	"log"
 
 	"github.com/granicus/mysql-binlog-go/bitset"
-	"github.com/granicus/mysql-binlog-go/deserialization"
+	. "github.com/granicus/mysql-binlog-go/deserialization"
 )
+
+var TableMapCollection map[uint64]*TableMapEvent
+
+func init() {
+	TableMapCollection = make(map[uint64]*TableMapEvent)
+}
 
 type TableMapEvent struct {
 	TableId         uint64
@@ -18,8 +23,6 @@ type TableMapEvent struct {
 	Metadata        []*ColumnMetadata
 	CanBeNull       bitset.Bitset
 }
-
-type TableMapEventDeserializer struct{}
 
 /*
 TABLE MAP DATA
@@ -47,75 +50,38 @@ P bytes   = number of columns
 C bytes   = column types
 1 byty    = packed int byte key (see ReadPackedInteger)
 P bytes   = metdata length
-M bytes   = metadata (skipping for now)
+M bytes   = metadata
 N bytes   = can be null bitset
 
 */
 
-func (d *TableMapEventDeserializer) Deserialize(reader io.ReadSeeker, eventInfo *Event) EventData {
-	fmt.Println("Expected next pos: ", eventInfo.Header.NextPosition)
-
+func (b *Binlog) DeserializeTableMapEvent(header *EventHeader) EventData {
 	e := new(TableMapEvent)
 
-	var err error
+	// Read 6 bytes for table id, pad to 8, read as uint64
+	tableIdBytes, err := ReadBytes(b.reader, 6)
+	fatalErr(err)
+	e.TableId = binary.LittleEndian.Uint64(append(tableIdBytes, byte(0), byte(0)))
 
-	e.TableId, err = deserialization.ReadTableId(reader)
+	// Skip 2 reserved and 1 database name length bytes
+	_, err = b.reader.Seek(3, 1)
 	fatalErr(err)
 
-	_, err = reader.Seek(3, 1) // Skip 2 reserved and 1 database name length bytes
+	e.DatabaseName, err = ReadNullTerminatedString(b.reader)
 	fatalErr(err)
 
-	e.DatabaseName, err = deserialization.ReadNullTerminatedString(reader)
+	// Skip table name length
+	_, err = b.reader.Seek(1, 1)
 	fatalErr(err)
 
-	_, err = reader.Seek(1, 1) // Skip table name length
+	e.TableName, err = ReadNullTerminatedString(b.reader)
 	fatalErr(err)
 
-	e.TableName, err = deserialization.ReadNullTerminatedString(reader)
+	e.NumberOfColumns, err = ReadPackedInteger(b.reader)
 	fatalErr(err)
 
-	/*
-		OLD STYLE
-		=========
-
-		var nullTerm uint8
-
-		_, err := reader.Seek(2, 1) // reserved
-		fatalErr(err)
-
-		databaseNameLength, err := deserialization.ReadUint8(reader)
-		fatalErr(err)
-
-		databaseNameBytes, err := deserialization.ReadBytes(reader, int(databaseNameLength))
-		fatalErr(err)
-
-		// String null terminator
-		nullTerm, err = deserialization.ReadUint8(reader)
-		if nullTerm != 0 {
-			log.Fatal("expected null terminator")
-		}
-
-		e.DatabaseName = string(databaseNameBytes)
-
-		tableNameLength, err := deserialization.ReadUint8(reader)
-		fatalErr(err)
-
-		tableNameBytes, err := deserialization.ReadBytes(reader, int(tableNameLength))
-		fatalErr(err)
-
-		// String null terminator
-		nullTerm, err = deserialization.ReadUint8(reader)
-		if nullTerm != 0 {
-			log.Fatal("expected null terminator")
-		}
-
-		e.TableName = string(tableNameBytes)
-	*/
-
-	e.NumberOfColumns, err = deserialization.ReadPackedInteger(reader)
-	fatalErr(err)
-
-	columnTypesBytes, err := deserialization.ReadBytes(reader, int(e.NumberOfColumns))
+	// Read column types as bytes and convert them to MysqlTypes
+	columnTypesBytes, err := ReadBytes(b.reader, int(e.NumberOfColumns))
 	fatalErr(err)
 
 	e.ColumnTypes = make([]MysqlType, len(columnTypesBytes))
@@ -123,54 +89,29 @@ func (d *TableMapEventDeserializer) Deserialize(reader io.ReadSeeker, eventInfo 
 		e.ColumnTypes[i] = MysqlType(b)
 	}
 
-	metadataLength, err := deserialization.ReadPackedInteger(reader)
+	metadataLength, err := ReadPackedInteger(b.reader)
 	fatalErr(err)
 
-	// skip for now
-	// fatalErr(reader.Seek(metadataLength, 1))
+	preMetadataPosition, err := b.reader.Seek(0, 1)
+	fatalErr(err)
 
-	// This represents how much we have read to make sure we don't over read
-	metadataRead := uint64(0)
-	metadata := make([]*ColumnMetadata, len(e.ColumnTypes))
-
+	e.Metadata = make([]*ColumnMetadata, len(e.ColumnTypes))
 	for i, t := range e.ColumnTypes {
-		metadata[i] = DeserializeColomnMetadata(reader, t)
-
-		if metadata[i] != nil {
-			metadataRead += uint64(len(metadata[i].data))
-		}
-
-		if metadataRead > metadataLength {
-			log.Fatal("Exceeded metadata length while processing metadata")
-		}
+		e.Metadata[i] = DeserializeColomnMetadata(b.reader, t)
 	}
 
-	fmt.Printf("read: %v, total: %v\n", metadataRead, metadataLength)
+	postMetadataPosition, err := b.reader.Seek(0, 1)
+	fatalErr(err)
 
-	e.Metadata = metadata
+	if postMetadataPosition-preMetadataPosition != int64(metadataLength) {
+		panic(fmt.Sprintf("Overshot metadata length by %v", postMetadataPosition-preMetadataPosition-int64(metadataLength)))
+	}
 
-	e.CanBeNull, err = deserialization.ReadBitset(reader, int(e.NumberOfColumns))
+	e.CanBeNull, err = ReadBitset(b.reader, int(e.NumberOfColumns))
 	fatalErr(err)
 
 	// Insert into tableMapCollectionInstance
-	mapCollection := GetTableMapCollectionInstance()
-	if _, ok := mapCollection[e.TableId]; !ok {
-		mapCollection[e.TableId] = e
-	}
-
-	n, err := reader.Seek(0, 1)
-	fatalErr(err)
-	fmt.Println("Actual next pos:", n)
-	fmt.Println("vardump:", *e)
-
-	lastBytes, err := deserialization.ReadBytes(reader, 4)
-	fmt.Println("Remaining bytes:", lastBytes)
-
-	for _, m := range e.Metadata {
-		if m != nil {
-			fmt.Println(*m)
-		}
-	}
+	TableMapCollection[e.TableId] = e
 
 	return e
 }

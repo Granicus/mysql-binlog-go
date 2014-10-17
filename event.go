@@ -1,61 +1,92 @@
 package binlog
 
 import (
-	"fmt"
+	"bytes"
+	"encoding/binary"
 	"io"
-	"log"
+
+	"github.com/granicus/mysql-binlog-go/deserialization"
 )
 
 type EventData interface{}
 
-type EventDeserializer interface {
-	Deserialize(io.ReadSeeker, *Event) EventData
+type EventHeader struct {
+	Timestamp    uint32
+	Type         MysqlBinlogEventType
+	ServerId     uint32
+	Length       uint32
+	NextPosition uint32
+	Flag         [2]byte
+}
+
+// TODO: move this over to use encoding/binary with struct pointer
+func ReadEventHeader(r io.Reader) *EventHeader {
+	// Read number of bytes in header
+	b, err := deserialization.ReadBytes(r, 4+1+4+4+4+2)
+	fatalErr(err)
+
+	var h EventHeader
+	fatalErr(binary.Read(bytes.NewBuffer(b), binary.LittleEndian, &h))
+
+	return &h
 }
 
 type Event struct {
-	TotalLength  int
-	HeaderLength int
-	DataLength   int
-	Header       *EventHeader
-	Data         EventData
+	eventType      MysqlBinlogEventType
+	readerPosition int64
+	binlog         *Binlog
+	header         *EventHeader
+	data           *EventData
 }
 
-func ReadEvent(r io.ReadSeeker) *Event {
-	event := new(Event)
+func newIndexedEvent(binlog *Binlog, eventType MysqlBinlogEventType, position int64) *Event {
+	return &Event{
+		eventType:      eventType,
+		readerPosition: position,
+		binlog:         binlog,
+	}
+}
 
-	startingPosition, err := r.Seek(0, 1)
-	if err != nil {
-		log.Fatal(err)
+func newDeserializedEvent(binlog *Binlog, position int64, header *EventHeader, data EventData) *Event {
+	return &Event{
+		eventType:      header.Type,
+		readerPosition: position,
+		binlog:         binlog,
+		header:         header,
+		data:           &data,
+	}
+}
+
+func (e *Event) deserializeHeader() {
+	e.header = e.binlog.deserializeEventHeader(e.readerPosition)
+}
+
+func (e *Event) deserializeData() {
+	data := e.binlog.deserializeEventData(e.readerPosition, e.Header())
+	dataInterface := EventData(data) // compiler bug (can't do "&(interface{}(data))")
+	e.data = &dataInterface
+}
+
+func (e *Event) Type() MysqlBinlogEventType {
+	return e.eventType
+}
+
+func (e *Event) Position() int64 {
+	return e.readerPosition
+}
+
+func (e *Event) Header() *EventHeader {
+	if e.header == nil {
+		e.deserializeHeader()
 	}
 
-	event.Header = deserializeEventHeader(r)
-	fmt.Println("Event:")
-	fmt.Println("  Head:", event.Header)
-	fmt.Println("  Type:", event.Header.Type)
+	return e.header
+}
 
-	postHeaderPosition, err := r.Seek(0, 1)
-	if err != nil {
-		log.Fatal(err)
+func (e *Event) Data() EventData {
+	if e.data == nil {
+		e.deserializeData()
 	}
 
-	fmt.Println("post:", postHeaderPosition, ", start:", startingPosition)
-
-	event.HeaderLength = 19 // constant header length
-	event.TotalLength = int(int64(event.Header.NextPosition) - startingPosition)
-	event.DataLength = event.TotalLength - event.HeaderLength
-
-	// event.header.Type = UPDATE_ROWS_EVENTv2
-
-	event.Data = event.Header.DataDeserializer().Deserialize(r, event)
-
-	currentPos, err := r.Seek(0, 1)
-	fatalErr(err)
-
-	if currentPos != int64(event.Header.NextPosition) {
-		_, err = r.Seek(int64(event.Header.NextPosition), 0)
-		// Alternative, slightly faster:
-		// _, err = r.Seek(int64(event.header.NextPosition) - currentPos, 1)
-	}
-
-	return event
+	return &e.data
 }

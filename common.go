@@ -6,8 +6,6 @@ import (
 	"runtime/debug"
 )
 
-// Error macro
-// TODO: add backtrace
 func fatalErr(err error) {
 	if err != nil {
 		fmt.Println("Generic fatal error:", err)
