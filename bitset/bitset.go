@@ -61,22 +61,16 @@ func (set Bitset) Clear() {
 	}
 }
 
-func (set Bitset) Splice(start, end uint) Bitset {
-	maxSize := end - start
+func (set Bitset) Count() int {
+	count := 0
 
-	if maxSize <= 0 {
-		log.Fatal("Bad start/end values for bitset splicing")
-	}
-
-	splicedSet := Make(maxSize)
-
-	for i := uint(0); i < uint(maxSize); i++ {
-		if set.Bit(start + i) {
-			splicedSet.SetBit(i)
+	for i := uint(0); i < uint(64*len(set)); i++ {
+		if set.Bit(i) {
+			count++
 		}
 	}
 
-	return splicedSet
+	return count
 }
 
 // strconv doesn't force zeroes to print, so hackyness, here I come
