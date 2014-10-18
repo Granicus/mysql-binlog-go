@@ -21,11 +21,7 @@ type StreamingBinlog struct {
 	cmd          *exec.Cmd
 }
 
-func NewStreamingBinlog(filepath string, startPosition int64) *StreamingBinlog {
-	if startPosition < 4 {
-		startPosition = 4
-	}
-
+func NewStreamingBinlog(filepath string) *StreamingBinlog {
 	contents, err := ioutil.ReadFile(filepath)
 	if err != nil {
 		panic(err)
@@ -66,7 +62,7 @@ func (b *StreamingBinlog) Tail() error {
 	b.cmd.Dir = directory
 	b.cmd.Stdout = b
 
-	go b.Listen()
+	go b.listen()
 
 	err := b.cmd.Run()
 
@@ -77,7 +73,7 @@ func (b *StreamingBinlog) Tail() error {
 	return err
 }
 
-func (b *StreamingBinlog) Listen() {
+func (b *StreamingBinlog) listen() {
 	b.listening = true
 
 	for {

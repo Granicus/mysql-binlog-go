@@ -61,6 +61,29 @@ func (b *Binlog) Event(i int) *Event {
 	return b.events[i]
 }
 
+func (b *Binlog) eventIndexAtPosition(position int64) int {
+	for i, event := range b.events {
+		if position <= event.Position() {
+			return i
+		}
+	}
+
+	return -1
+}
+
+func (b *Binlog) EventsAfter(position int64) []*Event {
+	if position < 4 {
+		position = 4
+	}
+
+	firstIndex := b.eventIndexAtPosition(position)
+	if firstIndex < 0 || len(b.events)-1 > firstIndex {
+		return []*Event{}
+	}
+
+	return b.events[firstIndex:]
+}
+
 func (b *Binlog) GetPosition() (int64, error) {
 	return b.reader.Seek(0, 1)
 }
