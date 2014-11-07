@@ -3,7 +3,6 @@ package binlog
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 
@@ -119,7 +118,6 @@ func (m *ColumnMetadata) PackSize() uint8 {
 		return uint8(m.data[0])
 
 	case STRING_METADATA, BITSET_METADATA: // NOTE: may be big endian (see shyiko version)
-		fmt.Println("!!! HEY, I JUST DECODED STRING METADATA. IF THERE IS AN ERROR BELOW, THIS COULD BE WHY.")
 		if len(m.data) != 2 {
 			fatalMetadataLengthMismatch()
 		}

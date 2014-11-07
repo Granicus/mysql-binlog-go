@@ -4,6 +4,9 @@ package binlog
 // sadly, golang doesn't support constant arrays (because of slices I think)
 var BINLOG_MAGIC = [4]byte{0xfe, 0x62, 0x69, 0x6e}
 
+const MAGIC_BYTES_LENGTH  int = 4
+const EVENT_HEADER_LENGTH int = 19
+
 // This is only int64 to save time on casting
 // (hint: it probably shouldn't be int64)
 const (

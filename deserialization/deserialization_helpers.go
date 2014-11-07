@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 
@@ -192,8 +191,6 @@ func ReadPackedInteger(r io.Reader) (uint64, error) {
 	case 255:
 		log.Fatal("Packed integer invalid value:", firstByte)
 	}
-
-	fmt.Println("Packed Int: Reading", bytesToRead, "more bytes")
 
 	b, err := ReadBytes(r, bytesToRead)
 

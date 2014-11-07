@@ -8,12 +8,6 @@ import (
 	. "github.com/granicus/mysql-binlog-go/deserialization"
 )
 
-var TableMapCollection map[uint64]*TableMapEvent
-
-func init() {
-	TableMapCollection = make(map[uint64]*TableMapEvent)
-}
-
 type TableMapEvent struct {
 	TableId         uint64
 	DatabaseName    string
@@ -111,7 +105,7 @@ func (b *Binlog) DeserializeTableMapEvent(header *EventHeader) EventData {
 	fatalErr(err)
 
 	// Insert into tableMapCollectionInstance
-	TableMapCollection[e.TableId] = e
+	b.TableMapCollection[e.TableId] = e
 
 	return e
 }

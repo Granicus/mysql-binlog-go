@@ -12,17 +12,19 @@ import (
 type EventDataDeserializeFunc func(*EventHeader) EventData
 
 type Binlog struct {
-	reader      io.ReadSeeker
-	logVersion  uint8
-	bytesLength int64
-	events      []*Event
+	TableMapCollection map[uint64]*TableMapEvent
+	reader             io.ReadSeeker
+	logVersion         uint8
+	bytesLength        int64
+	events             []*Event
 }
 
 func NewBinlog(r io.ReadSeeker) *Binlog {
 	b := &Binlog{
-		reader:      r,
-		bytesLength: -1,
-		events:      []*Event{},
+		TableMapCollection: make(map[uint64]*TableMapEvent),
+		reader:             r,
+		bytesLength:        -1,
+		events:             []*Event{},
 	}
 
 	b.findLogVersion()
@@ -96,26 +98,6 @@ func (b *Binlog) Skip(n int64) error {
 func (b *Binlog) SetPosition(newPosition int64) error {
 	_, err := b.reader.Seek(newPosition, 0)
 	return err
-
-	/*
-		currentPosition, err := b.GetPosition()
-		fatalErr(err)
-
-		positionDifference := newPosition - currentPosition
-
-		// Not using math.Abs to avoid truncation when converting to float32
-		absolutePositionDifference := positionDifference
-		if absolutePositionDifference < 0 {
-			absolutePositionDifference = -absolutePositionDifference
-		}
-
-		if newPosition > absolutePositionDifference {
-			return b.Skip(positionDifference)
-		}
-
-		_, err = b.reader.Seek(newPosition, 0)
-		return err
-	*/
 }
 
 // assumes you want to feed in data
@@ -160,6 +142,8 @@ func (b *Binlog) deserializeEventData(startPosition int64, header *EventHeader) 
 func (b *Binlog) findTableMapEvent(tableId uint64) *TableMapEvent {
 	for _, event := range b.events {
 		if event.Type() == TABLE_MAP_EVENT && event.data == nil {
+			fmt.Println("table map event index:", event)
+
 			data := event.Data().(*TableMapEvent)
 
 			if data.TableId == tableId {
@@ -278,7 +262,7 @@ func (b *Binlog) indexEvent() error {
 	}
 
 	// Skip the difference between where we should be and where we started, minus what we already read
-	err = b.Skip((int64(nextPosition) - startPosition) - 17)
+	err = b.SetPosition(int64(nextPosition))
 	if err != nil {
 		return err
 	}
@@ -290,7 +274,7 @@ func (b *Binlog) indexEvent() error {
 
 func (b *Binlog) indexEvents() {
 	var err error
-	for err != nil {
+	for err == nil {
 		err = b.indexEvent()
 	}
 }

@@ -72,9 +72,16 @@ func (b *Binlog) DeserializeRowsEvent(header *EventHeader) EventData {
 	e.TableId = binary.LittleEndian.Uint64(append(tableIdBytes, byte(0), byte(0)))
 
 	// If the TableMapEvent has not been logged, find it and deserialize it
-	tableMap, ok := TableMapCollection[e.TableId]
+	tableMap, ok := b.TableMapCollection[e.TableId]
 	if !ok {
+		// TODO: create position stash/pop system
+		oldPosition, err := b.reader.Seek(0, 1)
+		fatalErr(err)
+
 		tableMap = b.findTableMapEvent(e.TableId)
+
+		_, err = b.reader.Seek(oldPosition, 0)
+		fatalErr(err)
 	}
 
 	// Skip reserved bytes
@@ -108,7 +115,7 @@ func (b *Binlog) DeserializeRowsEvent(header *EventHeader) EventData {
 		// Check if there are any more rows to deserialize
 		if currentPos >= int64(header.NextPosition)-4 {
 			if currentPos > int64(header.NextPosition) {
-				fmt.Println("** ROW EVENT OVERSHOT READING:", currentPos-int64(header.NextPosition))
+				panic(fmt.Errorf("** ROW EVENT OVERSHOT READING: %v", currentPos-int64(header.NextPosition)))
 			}
 
 			break
@@ -118,7 +125,11 @@ func (b *Binlog) DeserializeRowsEvent(header *EventHeader) EventData {
 		fatalErr(err)
 
 		if len(e.UsedSet) != len(nullSet) {
-			panic("UsedSet and NullSet length mismatched")
+			panic(fmt.Errorf("UsedSet and NullSet length mismatched"))
+		}
+
+		if uint64(len(tableMap.ColumnTypes)) != e.NumberOfColumns {
+			panic(fmt.Errorf("Table map does not contain expected number of column types %v %v", len(tableMap.ColumnTypes), e.NumberOfColumns))
 		}
 
 		cells := make(RowImage, e.NumberOfColumns)

@@ -1,104 +1,63 @@
 package binlog
 
-import (
-	"io/ioutil"
-	"os/exec"
-	"path/filepath"
-)
-
-type BinlogEventHandler func(event *Event)
-
 // TODO: find a way not to have two different references to the AppendableBuffer
 type StreamingBinlog struct {
 	Binlog
-	filepath     string
-	listening    bool
-	eventHandler BinlogEventHandler
-	buffer       *AppendableBuffer
-	appendFunc   func([]byte)
-	chunkChan    chan *[]byte
-	stopChan     chan bool
-	cmd          *exec.Cmd
+	filepath   string
+	listening  bool
+	buffer     *AppendableBuffer
+	appendFunc func([]byte)
+	stopChan   chan bool
+	tailer     *BinlogTailer
 }
 
-func NewStreamingBinlog(filepath string) *StreamingBinlog {
-	contents, err := ioutil.ReadFile(filepath)
+func StreamBinlog(filepath string, preloadBufferStopPosition int64) *StreamingBinlog {
+	var err error
+	log := new(StreamingBinlog)
+
+	log.TableMapCollection = make(map[uint64]*TableMapEvent)
+	log.bytesLength = -1
+	log.events = []*Event{}
+	log.filepath = filepath
+
+	log.tailer, err = Tail(filepath)
 	if err != nil {
 		panic(err)
 	}
 
-	buffer := NewAppendableBuffer(contents)
+	filePosition := int64(MAGIC_BYTES_LENGTH)
+	existingContents := BINLOG_MAGIC[:]
 
-	log := &StreamingBinlog{
-		Binlog:    *NewBinlog(buffer),
-		filepath:  filepath,
-		buffer:    buffer,
-		chunkChan: make(chan *[]byte),
-		stopChan:  make(chan bool),
+	for filePosition < preloadBufferStopPosition {
+		serializedEvent := log.tailer.ReadSerializedEvent()
+		filePosition += int64(len(serializedEvent))
+		existingContents = append(existingContents, serializedEvent...)
 	}
+
+	log.buffer = NewAppendableBuffer(existingContents)
+	log.reader = log.buffer // set Binlog buffer
+
+	log.Skip(int64(MAGIC_BYTES_LENGTH))
+	log.indexEvents()
 
 	return log
 }
 
-func (b *StreamingBinlog) SetEventHandler(handler BinlogEventHandler) {
-	b.eventHandler = handler
+func (log *StreamingBinlog) Close() {
+	log.tailer.Close()
 }
 
-func (b *StreamingBinlog) Stop() {
-	b.stopChan <- true
-}
+func (log *StreamingBinlog) ReadEvent() *Event {
+	eventPosition := int64(log.buffer.Length())
 
-// called by tail command stdout writer
-func (b *StreamingBinlog) Write(p []byte) (int, error) {
-	b.chunkChan <- &p
-	return len(p), nil
-}
+	serializedEvent := log.tailer.ReadSerializedEvent()
+	log.buffer.Append(serializedEvent)
 
-func (b *StreamingBinlog) Tail() error {
-	directory, filename := filepath.Split(b.filepath)
-
-	b.cmd = exec.Command("tail", "-f", "-n", "0", filename)
-
-	b.cmd.Dir = directory
-	b.cmd.Stdout = b
-
-	go b.listen()
-
-	err := b.cmd.Run()
-
-	if b.listening {
-		b.Stop()
+	err := log.SetPosition(eventPosition)
+	if err != nil {
+		panic(err)
 	}
 
-	return err
-}
-
-func (b *StreamingBinlog) listen() {
-	b.listening = true
-
-	for {
-		select {
-
-		case <-b.stopChan:
-			fatalErr(b.cmd.Process.Kill())
-			break
-
-		case bytesPointer := <-b.chunkChan:
-			newPosition := int64(b.buffer.Length() - 1)
-			b.buffer.Append(*bytesPointer)
-
-			header := b.deserializeEventHeader(newPosition)
-			data := b.deserializeEventData(newPosition, header)
-
-			event := newDeserializedEvent(&b.Binlog, newPosition, header, data)
-			b.events = append(b.events, event)
-
-			if b.eventHandler != nil {
-				b.eventHandler(event)
-			}
-
-		}
-	}
-
-	b.listening = false
+	log.indexEvent()
+	return log.events[len(log.events)-1]
 }

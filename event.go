@@ -88,5 +88,5 @@ func (e *Event) Data() EventData {
 		e.deserializeData()
 	}
 
-	return &e.data
+	return *e.data
 }

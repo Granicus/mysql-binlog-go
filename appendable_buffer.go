@@ -46,7 +46,7 @@ func (b *AppendableBuffer) Seek(offset int64, whence int) (int64, error) {
 		newPosition = int64(b.off)
 
 	case 2:
-		newPosition = int64(len(b.buf))
+		newPosition = int64(len(b.buf) - 1)
 
 	default:
 		return int64(b.off), errors.New("Invalid whence passed to Seek")

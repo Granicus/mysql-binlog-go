@@ -36,8 +36,6 @@ func NewNullRowImageCell(mysqlType MysqlType) NullRowImageCell {
 }
 
 func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex int) RowImageCell {
-	fmt.Println("Deserializing cell:", tableMap.ColumnTypes[columnIndex].String())
-
 	mysqlType := tableMap.ColumnTypes[columnIndex]
 
 	switch mysqlType {
@@ -67,8 +65,6 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 	case MYSQL_TYPE_LONG:
 		v, err := deserialization.ReadUint32(r)
 		fatalErr(err)
-
-		fmt.Println("long:", v)
 
 		return NumberRowImageCell(v)
 
@@ -123,10 +119,8 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 
 		if mysqlType == MYSQL_TYPE_DATETIME_V2 {
 			fn = deserialization.ReadDatetimeV2
-			fmt.Println("datetime")
 		} else {
 			fn = deserialization.ReadTimestampV2
-			fmt.Println("timestamp")
 		}
 
 		v, err := fn(r, tableMap.Metadata[columnIndex])
@@ -179,11 +173,6 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		b, err := deserialization.ReadBytes(r, int(length))
 		tempErr(err)
 
-		fmt.Println("max length:", metadata.MaxLength())
-		fmt.Println("bytes length:", len(b))
-		fmt.Println("bytes:", b)
-		fmt.Println("bytes string:", string(b))
-
 		return StringRowImageCell{
 			Type:  mysqlType,
 			Value: string(b),
@@ -198,25 +187,13 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		}
 
 		metadata := tableMap.Metadata[columnIndex]
-		fmt.Println("** STRING METADATA:", metadata)
-		fmt.Println("** STRING REALTYPE:", metadata.RealType())
 
 		if metadata.RealType() == MYSQL_TYPE_ENUM {
-			fmt.Println("************ DESERIALIZING ENUM")
-
-			/*(
-			lengthByte, err := deserialization.ReadByte(r)
-			tempErr(err)
-
-			fmt.Println("** LENGTH BYTE:", lengthByte)
-			*/
-
 			b, err := deserialization.ReadBytes(r, int(metadata.PackSize()))
 			tempErr(err)
 
 			enumString := string(b[0] + byte(48))
 
-			fmt.Println("** ENUM READ:", enumString)
 			return StringRowImageCell{
 				Type:  mysqlType,
 				Value: enumString,
@@ -236,36 +213,8 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 			tempErr(err)
 		}
 
-		fmt.Println("** STRING READ LENGTH:", length)
-
 		b, err := deserialization.ReadBytes(r, int(length))
 		tempErr(err)
-
-		fmt.Println("** BYTES READ:", b)
-		fmt.Println("** STRING READ:", string(b))
-
-		/*
-			I'm still not completely sure if this is the correct way to do this.
-
-			Here is a possible alternative for acquiring the length:
-
-			length, err := ReadUint8(r)
-
-			or
-
-			metadata := tableMap.Metadata[columnIndex]
-			packSize := metadata.PackSize()
-			lengthBytes, err := ReadBytes(r, int(packSize))
-
-		*/
-
-		/*
-			length, err := deserialization.ReadPackedInteger(r)
-			tempErr(err)
-
-			b, err := deserialization.ReadBytes(r, int(length))
-			tempErr(err)
-		*/
 
 		return StringRowImageCell{
 			Type:  mysqlType,
@@ -290,9 +239,6 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 
 		b, err := deserialization.ReadBytes(r, int(length))
 		fatalErr(err)
-
-		fmt.Println("** BLOB LENGTH:", length)
-		fmt.Println("** BLOB VALUE:", string(b))
 
 		return BlobRowImageCell(b)
 

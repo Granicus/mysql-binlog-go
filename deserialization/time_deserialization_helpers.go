@@ -3,7 +3,6 @@ package deserialization
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"time"
 
@@ -206,6 +205,7 @@ NOTE: We completely ignore the sign for this type
 
 */
 
+/*
 func printUint64(n uint64) {
 	for i := uint(0); i < 64; i++ {
 		s := "0"
@@ -217,6 +217,7 @@ func printUint64(n uint64) {
 	}
 	fmt.Println()
 }
+*/
 
 func ReadDatetimeV2(r io.Reader, metadata Metadata) (time.Time, error) {
 	// Using uint64 for values to avoid variable truncation
@@ -236,13 +237,8 @@ func ReadDatetimeV2(r io.Reader, metadata Metadata) (time.Time, error) {
 
 	value := binary.BigEndian.Uint64(b)
 
-	printUint64(value)
-	printUint64(0x7FFFE00000)
-
 	// [1-17] Mask:  0111 1111 1111 1111 1100 (0000 * 5) (0x7FFFC00000)
 	yearMonth = (value & 0x7FFFC00000) >> 22
-	// fmt.Printf("yearMonth: %b", yearMonth)
-	printUint64(yearMonth)
 
 	// [18-22] Mask: (0000 * 4) 0011 1110 (0000 * 4) (0x00003E0000)
 	day = (value & 0x00003E0000) >> 17
@@ -256,12 +252,6 @@ func ReadDatetimeV2(r io.Reader, metadata Metadata) (time.Time, error) {
 	// [34-39] Mask: (0000 * 8) 0011 1111 (0x000000003F)
 	second = (value & 0x000000003F)
 
-	fmt.Println("year/month:", yearMonth)
-	fmt.Println("day", day)
-	fmt.Println("hour", hour)
-	fmt.Println("minute", minute)
-	fmt.Println("second", second)
-
 	// TODO: learn more about golang vs mysql time differences
 	year := 1000 // lowest mysql year value
 	month := time.January
@@ -271,10 +261,6 @@ func ReadDatetimeV2(r io.Reader, metadata Metadata) (time.Time, error) {
 		month = time.Month(yearMonth%13 - 1)
 	}
 
-	fmt.Println("year:", year)
-	fmt.Println("month:", month)
-
 	date, err := time.Date(year, month, int(day), int(hour), int(minute), int(second), 0, time.UTC), nil
-	fmt.Println("Date:", date)
 	return date, err
 }
