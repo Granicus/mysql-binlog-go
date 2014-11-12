@@ -3,7 +3,6 @@ package deserialization
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"time"
 
@@ -99,8 +98,6 @@ func ReadDate(r io.Reader) (date.MysqlDate, error) {
 	if err != nil {
 		return date.MysqlDate{}, err
 	}
-
-	fmt.Println("date bytes:", b)
 
 	// Pad to 4 bytes
 	b = append(b, byte(0))
