@@ -3,10 +3,12 @@ package deserialization
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/granicus/mysql-binlog-go/bitset"
+	"github.com/granicus/mysql-binlog-go/date"
 )
 
 // Metadata interface for ColumnMetadata structs from main package
@@ -88,15 +90,17 @@ Little Endian
 
 */
 
-func ReadDate(r io.Reader) (time.Time, error) {
+func ReadDate(r io.Reader) (date.MysqlDate, error) {
 	var year uint32
 	var month uint32
 	var day uint32
 
 	b, err := ReadBytes(r, 3)
 	if err != nil {
-		return time.Time{}, err
+		return date.MysqlDate{}, err
 	}
+
+	fmt.Println("date bytes:", b)
 
 	// Pad to 4 bytes
 	b = append(b, byte(0))
@@ -112,7 +116,7 @@ func ReadDate(r io.Reader) (time.Time, error) {
 	// [19-24] 0000 0000 0000 0000 0001 1111 (0x00001F)
 	day = (value & 0x00001F)
 
-	return time.Date(int(year), time.Month(month), int(day), 0, 0, 0, 0, time.UTC), nil
+	return date.NewMysqlDate(int(year), int(month), int(day)), nil
 }
 
 /*
@@ -130,15 +134,15 @@ Big Endian
 
 */
 
-func ReadTimeV2(r io.Reader) (time.Duration, error) {
-	var sign int
+func ReadTimeV2(r io.Reader) (date.MysqlTime, error) {
+	// var sign int
 	var hour uint32
 	var minute uint32
 	var second uint32
 
 	b, err := ReadBytes(r, 3)
 	if err != nil {
-		return time.Duration(0), err
+		return date.MysqlTime{}, err
 	}
 
 	// Pad to 4 bytes
@@ -146,11 +150,11 @@ func ReadTimeV2(r io.Reader) (time.Duration, error) {
 
 	value := binary.BigEndian.Uint32(b)
 
-	if (value | 1) > 0 {
-		sign = 1
-	} else {
-		sign = -1
-	}
+	// if (value | 1) > 0 {
+	// 	sign = 1
+	// } else {
+	// 	sign = -1
+	// }
 
 	// [2-11]  Mask: 0011 1111 1111 0000 0000 0000 (0x3FF000)
 	hour = (value & 0x3FF000) >> 12
@@ -161,7 +165,7 @@ func ReadTimeV2(r io.Reader) (time.Duration, error) {
 	// [18-23] Mask: 0000 0000 0000 0000 0011 1111 (0x00003F)
 	second = (value & 0x00003F)
 
-	return time.Duration(sign) * ((time.Hour * time.Duration(hour)) + (time.Minute * time.Duration(minute)) + (time.Second * time.Duration(second))), nil
+	return date.NewMysqlTime(int(hour), int(minute), int(second)), nil
 }
 
 /*
@@ -207,8 +211,7 @@ NOTE: We completely ignore the sign for this type
 
 /*
 func printUint64(n uint64) {
-	for i := uint(0); i < 64; i++ {
-		s := "0"
+	for i := uint(0); i < 64; i++ { s := "0"
 		if (n & (0x8000000000000000 >> i)) > 0 {
 			s = "1"
 		}
@@ -219,7 +222,7 @@ func printUint64(n uint64) {
 }
 */
 
-func ReadDatetimeV2(r io.Reader, metadata Metadata) (time.Time, error) {
+func ReadDatetimeV2(r io.Reader, metadata Metadata) (date.MysqlDatetime, error) {
 	// Using uint64 for values to avoid variable truncation
 	var yearMonth uint64
 	var day uint64
@@ -229,7 +232,7 @@ func ReadDatetimeV2(r io.Reader, metadata Metadata) (time.Time, error) {
 
 	b, err := ReadBytes(r, 5)
 	if err != nil {
-		return time.Time{}, err
+		return date.MysqlDatetime{}, err
 	}
 
 	// Pad to 8 bytes
@@ -252,15 +255,8 @@ func ReadDatetimeV2(r io.Reader, metadata Metadata) (time.Time, error) {
 	// [34-39] Mask: (0000 * 8) 0011 1111 (0x000000003F)
 	second = (value & 0x000000003F)
 
-	// TODO: learn more about golang vs mysql time differences
-	year := 1000 // lowest mysql year value
-	month := time.January
+	year := int(yearMonth / 13)
+	month := int((yearMonth % 13) - 1)
 
-	if yearMonth != 0 {
-		year = int(yearMonth / 13)
-		month = time.Month(yearMonth%13 - 1)
-	}
-
-	date, err := time.Date(year, month, int(day), int(hour), int(minute), int(second), 0, time.UTC), nil
-	return date, err
+	return date.NewMysqlDatetime(year, month, int(day), int(hour), int(minute), int(second)), nil
 }

@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/granicus/mysql-binlog-go/date"
 	"github.com/granicus/mysql-binlog-go/deserialization"
 )
 
@@ -25,11 +26,10 @@ type StringRowImageCell struct {
 	Type  MysqlType
 	Value string
 }
-type DurationRowImageCell time.Duration
-type TimeRowImageCell struct {
-	Type  MysqlType
-	Value time.Time
-}
+type TimestampRowImageCell time.Time
+type DateRowImageCell date.MysqlDate
+type TimeRowImageCell date.MysqlTime
+type DatetimeRowImageCell date.MysqlDatetime
 
 func NewNullRowImageCell(mysqlType MysqlType) NullRowImageCell {
 	return NullRowImageCell(mysqlType)
@@ -103,33 +103,25 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		date, err := deserialization.ReadDate(r)
 		fatalErr(err)
 
-		return TimeRowImageCell{
-			Type:  mysqlType,
-			Value: date,
-		}
+		return DateRowImageCell(date)
 
 	case MYSQL_TYPE_TIME_V2:
-		v, err := deserialization.ReadTimeV2(r)
+		time, err := deserialization.ReadTimeV2(r)
 		fatalErr(err)
 
-		return DurationRowImageCell(v)
+		return TimeRowImageCell(time)
 
-	case MYSQL_TYPE_DATETIME_V2, MYSQL_TYPE_TIMESTAMP_V2:
-		var fn func(io.Reader, deserialization.Metadata) (time.Time, error)
-
-		if mysqlType == MYSQL_TYPE_DATETIME_V2 {
-			fn = deserialization.ReadDatetimeV2
-		} else {
-			fn = deserialization.ReadTimestampV2
-		}
-
-		v, err := fn(r, tableMap.Metadata[columnIndex])
+	case MYSQL_TYPE_DATETIME_V2:
+		datetime, err := deserialization.ReadDatetimeV2(r, tableMap.Metadata[columnIndex])
 		fatalErr(err)
 
-		return TimeRowImageCell{
-			Type:  mysqlType,
-			Value: v,
-		}
+		return DatetimeRowImageCell(datetime)
+
+	case MYSQL_TYPE_TIMESTAMP_V2:
+		timestamp, err := deserialization.ReadTimestampV2(r, tableMap.Metadata[columnIndex])
+		fatalErr(err)
+
+		return TimestampRowImageCell(timestamp)
 
 	case MYSQL_TYPE_YEAR:
 		v, err := deserialization.ReadUint8(r)
