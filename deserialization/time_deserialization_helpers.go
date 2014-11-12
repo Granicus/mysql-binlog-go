@@ -3,6 +3,7 @@ package deserialization
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"time"
 
@@ -175,15 +176,19 @@ Big Endian
 */
 
 func ReadTimestampV2(r io.Reader, metadata Metadata) (time.Time, error) {
-	millisecond, err := ReadUint32(r)
+	millisecondBytes, err := ReadBytes(r, 4)
 	if err != nil {
 		return time.Time{}, err
 	}
+
+	millisecond := binary.BigEndian.Uint32(millisecondBytes)
 
 	fractionalSeconds, err := readFractionalSeconds(r, metadata)
 	if err != nil {
 		return time.Time{}, err
 	}
+
+	fmt.Println("timestamp", time.Unix(int64(removeFractionalSeconds(uint(millisecond))), int64(fractionalSeconds)), millisecond, fractionalSeconds)
 
 	return time.Unix(int64(removeFractionalSeconds(uint(millisecond))), int64(fractionalSeconds)), nil
 }
