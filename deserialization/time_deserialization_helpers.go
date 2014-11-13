@@ -3,7 +3,6 @@ package deserialization
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"time"
 
@@ -187,8 +186,6 @@ func ReadTimestampV2(r io.Reader, metadata Metadata) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-
-	fmt.Println("timestamp", time.Unix(int64(removeFractionalSeconds(uint(millisecond))), int64(fractionalSeconds)), millisecond, fractionalSeconds)
 
 	return time.Unix(int64(removeFractionalSeconds(uint(millisecond))), int64(fractionalSeconds)), nil
 }
