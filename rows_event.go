@@ -9,15 +9,11 @@ import (
 )
 
 type RowsEvent struct {
-	dataType        MysqlBinlogEventType
+	Type            MysqlBinlogEventType
 	TableId         uint64
 	NumberOfColumns uint64
 	UsedSet         bitset.Bitset
 	Rows            []RowImage
-}
-
-func (e *RowsEvent) Type() MysqlBinlogEventType {
-	return e.dataType
 }
 
 func (e *RowsEvent) UsedFields() int {
@@ -64,7 +60,7 @@ http://bazaar.launchpad.net/~mysql/mysql-server/5.6/view/head:/sql/log_event.cc#
 
 func (b *Binlog) DeserializeRowsEvent(header *EventHeader) EventData {
 	e := new(RowsEvent)
-	e.dataType = header.Type
+	e.Type = header.Type
 
 	// Read 6 bytes for table id, pad to 8, read as uint64
 	tableIdBytes, err := ReadBytes(b.reader, 6)
