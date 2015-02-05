@@ -72,10 +72,6 @@ func readFractionalSeconds(r io.Reader, metadata Metadata) (int32, error) {
 	return fractionalSeconds, nil
 }
 
-func removeFractionalSeconds(milliseconds uint) uint {
-	return milliseconds - (milliseconds % 1000)
-}
-
 /*
 DATE
 ====
@@ -175,19 +171,19 @@ Big Endian
 */
 
 func ReadTimestampV2(r io.Reader, metadata Metadata) (time.Time, error) {
-	millisecondBytes, err := ReadBytes(r, 4)
+	secondsBytes, err := ReadBytes(r, 4)
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	millisecond := binary.BigEndian.Uint32(millisecondBytes)
+	seconds := binary.BigEndian.Uint32(secondsBytes)
 
 	fractionalSeconds, err := readFractionalSeconds(r, metadata)
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	return time.Unix(int64(removeFractionalSeconds(uint(millisecond))), int64(fractionalSeconds)), nil
+	return time.Unix(int64(seconds), int64(fractionalSeconds)), nil
 }
 
 /*
@@ -206,19 +202,6 @@ Big Endian
 
 NOTE: We completely ignore the sign for this type
 
-*/
-
-/*
-func printUint64(n uint64) {
-	for i := uint(0); i < 64; i++ { s := "0"
-		if (n & (0x8000000000000000 >> i)) > 0 {
-			s = "1"
-		}
-
-		fmt.Print(s)
-	}
-	fmt.Println()
-}
 */
 
 func ReadDatetimeV2(r io.Reader, metadata Metadata) (date.MysqlDatetime, error) {
@@ -255,7 +238,7 @@ func ReadDatetimeV2(r io.Reader, metadata Metadata) (date.MysqlDatetime, error) 
 	second = (value & 0x000000003F)
 
 	year := int(yearMonth / 13)
-	month := int((yearMonth % 13) - 1)
+	month := int((yearMonth % 13))
 
 	return date.NewMysqlDatetime(year, month, int(day), int(hour), int(minute), int(second)), nil
 }

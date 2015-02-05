@@ -142,8 +142,6 @@ func (b *Binlog) deserializeEventData(startPosition int64, header *EventHeader) 
 func (b *Binlog) findTableMapEvent(tableId uint64) *TableMapEvent {
 	for _, event := range b.events {
 		if event.Type() == TABLE_MAP_EVENT && event.data == nil {
-			fmt.Println("table map event index:", event)
-
 			data := event.Data().(*TableMapEvent)
 
 			if data.TableId == tableId {

@@ -96,6 +96,57 @@ func ReadUint8(r io.Reader) (uint8, error) {
 	return uint8(b), nil
 }
 
+func ReadInt64(r io.Reader) (int64, error) {
+	b, err := ReadBytes(r, 8)
+	if err != nil {
+		return int64(0), err
+	}
+
+	var value int64 = 0
+	if err = binary.Read(bytes.NewBuffer(b), binary.LittleEndian, &value); err != nil {
+		return int64(0), err
+	}
+
+	return value, nil
+}
+
+func ReadInt32(r io.Reader) (int32, error) {
+	b, err := ReadBytes(r, 4)
+	if err != nil {
+		return int32(0), err
+	}
+
+	var value int32 = 0
+	if err = binary.Read(bytes.NewBuffer(b), binary.LittleEndian, &value); err != nil {
+		return int32(0), err
+	}
+
+	return value, nil
+}
+
+func ReadInt16(r io.Reader) (int16, error) {
+	b, err := ReadBytes(r, 2)
+	if err != nil {
+		return int16(0), err
+	}
+
+	var value int16 = 0
+	if err = binary.Read(bytes.NewBuffer(b), binary.LittleEndian, &value); err != nil {
+		return int16(0), err
+	}
+
+	return value, nil
+}
+
+func ReadInt8(r io.Reader) (int8, error) {
+	b, err := ReadByte(r)
+	if err != nil {
+		return int8(0), err
+	}
+
+	return int8(b), nil
+}
+
 func ReadBitset(r io.Reader, bitCount int) (bitset.Bitset, error) {
 	// Shift any remainder bits over current byte block, allow for casting truncation
 	packSize := int((bitCount + 7) / 8)

@@ -18,10 +18,11 @@ type RowImage []RowImageCell
 type RowImageCell interface{}
 
 type NullRowImageCell MysqlType
-type NumberRowImageCell uint64
+type NumberRowImageCell int64
 type FloatingPointNumberRowImageCell float32
 type LargeFloatingPointNumberRowImageCell float64
-type BlobRowImageCell []byte
+
+// type BlobRowImageCell []byte
 type StringRowImageCell struct {
 	Type  MysqlType
 	Value string
@@ -45,13 +46,13 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		log.Fatal("Impossible type found in binlog!")
 
 	case MYSQL_TYPE_TINY:
-		v, err := deserialization.ReadUint8(r)
+		v, err := deserialization.ReadInt8(r)
 		fatalErr(err)
 
 		return NumberRowImageCell(v)
 
 	case MYSQL_TYPE_SHORT:
-		v, err := deserialization.ReadUint16(r)
+		v, err := deserialization.ReadInt16(r)
 		fatalErr(err)
 
 		return NumberRowImageCell(v)
@@ -60,16 +61,22 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		b, err := deserialization.ReadBytes(r, 3)
 		fatalErr(err)
 
-		return NumberRowImageCell(binary.LittleEndian.Uint32(b))
+		// pad and create buffer (for io.Reader)
+		buf := bytes.NewBuffer(append(b, byte(0)))
+
+		var value int32 = 0
+		fatalErr(binary.Read(buf, binary.LittleEndian, &value))
+
+		return NumberRowImageCell(value)
 
 	case MYSQL_TYPE_LONG:
-		v, err := deserialization.ReadUint32(r)
+		v, err := deserialization.ReadInt32(r)
 		fatalErr(err)
 
 		return NumberRowImageCell(v)
 
 	case MYSQL_TYPE_LONGLONG:
-		v, err := deserialization.ReadUint64(r)
+		v, err := deserialization.ReadInt64(r)
 		fatalErr(err)
 
 		return NumberRowImageCell(v)
@@ -187,7 +194,7 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 			enumString := string(b[0] + byte(48))
 
 			return StringRowImageCell{
-				Type:  mysqlType,
+				Type:  metadata.RealType(),
 				Value: enumString,
 			}
 		}
@@ -209,7 +216,7 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		tempErr(err)
 
 		return StringRowImageCell{
-			Type:  mysqlType,
+			Type:  metadata.RealType(),
 			Value: string(b),
 		}
 
@@ -232,7 +239,10 @@ func DeserializeRowImageCell(r io.Reader, tableMap *TableMapEvent, columnIndex i
 		b, err := deserialization.ReadBytes(r, int(length))
 		fatalErr(err)
 
-		return BlobRowImageCell(b)
+		return StringRowImageCell{
+			Type:  MYSQL_TYPE_BLOB,
+			Value: string(b),
+		}
 
 	case MYSQL_TYPE_DECIMAL, MYSQL_TYPE_GEOMETRY:
 		log.Fatal("Mysql type discovered but not supported at this time.")
